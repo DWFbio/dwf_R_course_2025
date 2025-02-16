@@ -1,5 +1,5 @@
 ---
-title: "Population Genetics in R"
+title: "Plots and Population Genetics in R"
 author: Daniel Förster \& Alexandre Courtiol
 date:  "`r format(Sys.time(), '%d %B, %Y')`"
 output:
@@ -135,7 +135,7 @@ install.packages(c("ggplot2", "sf", "rnaturalearth", "rnaturalearthdata", "grid"
 
 Load the libraries:
 
-```{r load packages, echo = TRUE, results = 'hide'}
+```{r load packages, message = FALSE}
 library(ggplot2)
 library(sf)
 library(rnaturalearth)
@@ -577,9 +577,26 @@ ggplot() +
 
 ------------------------------------------------------------------------
 
-Here's a picture displaying the code of the shapes.
+Here's a plot with all the shapes and their code.
 
-![R shape codes](images/pch-symbols.png)
+```{r pch options}
+
+df_shapes <- data.frame(
+  shape = 0:25,
+  label = 0:25,
+  x = 1:26,
+  y = rep(1, 26)
+)
+
+ggplot(df_shapes, aes(x = x, y = y)) +
+  geom_point(aes(shape = factor(shape)), size = 6) +
+  scale_shape_manual(values = 0:25) +
+  geom_text(aes(label = label), vjust = -1, size = 4) +
+  scale_x_continuous(breaks = 1:26, limits = c(0.5, 26.5)) +
+  scale_y_continuous(limits = c(0.5, 1.5)) +
+  theme_void() +
+  theme(legend.position = "none")
+```
 
 ------------------------------------------------------------------------
 
@@ -777,14 +794,6 @@ ggplot() +
     axis.text.x = element_text(angle = 45, hjust = 1)
   )
 ```
-
-Here were are:
-
-* making the x-axis label large and bold
-* making the y-axis label italic
-* making the "tick labels" larger
-* centering the title, and making it large and bold
-* making the subtitle larger and italic
 
 You can see that a common element here is `element_text()`, within which we have the options we can adjust. 
 
@@ -1124,9 +1133,10 @@ ggplot(results_long, aes(x = Sample_ID, y = Proportion, fill = Cluster)) +
   }) +
   
   theme_minimal() +
-  labs(x = "Sample", y = "Assignment Proportion", fill = "Cluster") +
+  labs(y = "Assignment Proportion") +
   theme(legend.position = "none",
-        axis.text.x = element_text(angle = 45, hjust = 1))
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title.x = element_blank())
 ```
 
 Here
@@ -1205,7 +1215,7 @@ ggplot(results_long, aes(x = Sample_ID, y = Proportion, fill = Cluster)) +
   theme_minimal() +
   labs(y = "Assignment Proportion") +
   theme(legend.position = "none",
-        axis.text.x = element_blank(),  # Hide original x-axis text
+        axis.text.x = element_blank(),  # hide original x-axis text
         axis.ticks.x = element_blank(),
         panel.grid.major = element_blank(),  # remove  gridlines
         panel.grid.minor = element_blank(),
@@ -1284,7 +1294,7 @@ Model-based methods usually operate on the premise that there is no evolution (=
 
 A chief reason why population genetic analyses tend to assume neutral evolution is the *computational complexity* involved in modeling non-neutral processes. 'Neutral models' allow for relatively straightforward modeling of allele frequency changes over time due to gene flow, genetic drift and mutation. I.e. these models assume that allele frequencies change due to migration, mutation or random sampling effects across generations, and not other evolutionary mechanisms (e.g. selection). 
 
-The second critical reason for assuming neutral evolution - that is, the presence of genetic drift and mutation - is that the presence of **population structure itself violates HWE**: population subdivision violates the assumption of random mating. This is compounded by restricted gene flow between populations, resulting in genetic drift acting independently in each population.
+The second critical reason for using models of neutral evolution, is that the presence of **population structure itself violates HWE**: population subdivision violates the assumption of random mating. This is compounded by restricted gene flow between populations, resulting in genetic drift acting independently in each population.
 
 Within a neutral evolution framework, applications such as STRUCTURE thus use the deviation from HWE to infer population structure.
 
@@ -1324,15 +1334,15 @@ In contrast, linkage disequilibrium (LD) occurs when alleles at different loci a
 
 While STRUCTURE and similar model-based clustering approaches are widely used in population genetics, they come with several important limitations.
 
-*Violation of assumptions in biological populations*
+**Violation of assumptions in biological populations**
 
 These methods assume that populations are in HWE and LE within each inferred cluster. However, real populations often violate these assumptions.
 
-*Computational complexity*
+**Computational complexity**
 
 STRUCTURE uses a Bayesian inference framework, which relies on Markov Chain Monte Carlo (MCMC) sampling. This can be computationally intensive, especially for large datasets with 100-1000s of individuals. Run-time increases exponentially with sample size, number of loci, and the number of clusters (K). The need for multiple independent runs to assess convergence adds to computational load.
 
-*Subjectivity in selecting the number of clusters (K)*
+**Subjectivity in selecting the number of clusters (K)**
 
 Choosing the correct number of clusters (K) is one of the most subjective aspects of STRUCTURE analysis. User-defined priors and parameters (e.g., admixture model, allele frequency correlation) can influence results. While there is a method to identify the population structure at the highest hierarchical level (ΔK method from Evanno et al.), there is actually no method to confirm the presence of only a single cluster!
 
@@ -1396,9 +1406,10 @@ Here we need to provide the path of the file as `"/data/lynx_12loc.gen"` using `
 myData <- read.genepop(file = "data/lynx_12loc.gen", ncode = 3, quiet = TRUE)
 ```
 
-***Why did we use `ncode = 3`?***
-
 Now the data is read into `R`.
+
+
+***Why did we use `ncode = 3`?***
 
 ------------------------------------------------------------------------
 
@@ -1686,9 +1697,9 @@ Here we also have the 95% confidence ellipse as in the `s.class()` plot.
 To add the population labels, we need to find the center position per population:
 
 ```{r PCA centroids}
-centroids <- pca_df |>
+pca_df |>
   group_by(Population) |>
-  summarize(PC1 = mean(PC1), PC2 = mean(PC2))
+  summarize(PC1 = mean(PC1), PC2 = mean(PC2)) -> centroids
 ```
 
 and use `geom_text()` to add them to the plot:
@@ -1815,6 +1826,8 @@ A simple way to arrange three plots in a single column, and giving the plots a l
 ggarrange(map_plot, PCA_plot, STRUCTURE_plot, ncol = 1, labels = c("A", "B", "C"))
 ```
 
+While not aesthetically pleasing, this shows us the basics of using `ggarrange()`.
+
 The first arguments in `ggarrange()` are our three ggplot objects. Then we define the number of columns with `ncol`, and can provide labels for the plots using `labels = c()`.
 
 ------------------------------------------------------------------------
@@ -1828,6 +1841,7 @@ final_plot <- ggarrange(top_row, PCA_plot, ncol = 1, labels = c("", "C"))
 
 final_plot
 ```
+
 
 As you can see, we can have an object created using `ggarrange()` (here, `top_row`) within another object (`final_plot`).
 

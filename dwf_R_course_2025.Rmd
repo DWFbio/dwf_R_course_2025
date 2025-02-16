@@ -1,0 +1,1927 @@
+---
+title: "Population Genetics in R"
+author: Daniel Förster \& Alexandre Courtiol
+date:  "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_float:
+      collapsed: yes
+editor_options: 
+  chunk_output_type: inline
+---
+  
+```{r setup, include = FALSE}
+options(width = 160, digits = 4) # to prevent premature text wrapping and reduce number of displayed digits
+knitr::opts_chunk$set(cache = FALSE, cache.path = "knitr/cache/", fig.path = "knitr/figures/")
+```
+
+------------------------------------------------------------------------
+  
+# Before we really start
+  
+------------------------------------------------------------------------
+  
+## Objectives
+  
+-   gain familiarity with `R`
+-   make a map using `ggplot2` and `sf`
+-   do some data-wrangling with `tidyverse` and generate a plot from the output of another application
+-   perform genetic analysis of microsatellite data using the packages `ade4`, `adegenet`, and `hierfstat`
+-   use `ggpubr` to produce a figure consisting of three panels (= 3 plots)
+
+------------------------------------------------------------------------
+  
+## Our Case Study: Eurasian lynx
+  
+Here's a pretty pic, so we know what we're working on.
+
+![Eurasian lynx, from wikimedia.org](images/lynx.jpg)
+
+------------------------------------------------------------------------
+  
+This large felid used to occur throughout Europe, but was virtually extinct in central and western Europe by the 19th century.
+
+In an effort to re-establish the species, lynx were re-introduced in some EU countries in the last decades.
+
+You can see their distribution here on the IUCN web page: <https://www.iucnredlist.org/species/12519/121707666>
+
+------------------------------------------------------------------------
+
+## Overview of the lynx data
+
+You previously used lynx data to run STRUCTURE analyses. We will use the same input file in Part.3 of this course.
+
+This file contains microsatellite data from 9 populations. Some of these are reintroduced populations, some are natural (or "*autochthonous*") populations. 
+
+**Note:** not all of the re-introductions were documented, but we can use genetics to try to figure out where re-introduced lynx originated.
+
+------------------------------------------------------------------------
+
+## Basic workflow 
+
+The course consists of four parts
+
+1. Making a map, displaying lynx species distribution, and sample locations
+
+2. Making a plot of the STRUCTURE results
+
+3. Conducting Principle Component Analysis (PCA) on the lynx data
+
+4. Putting together a multi-panel figure, containing 3 plots
+
+This year, we have two afternoons. We will do parts 1 and 2 today, and parts 3 and 4 tomorrow.
+
+------------------------------------------------------------------------
+
+## About this document
+
+This document is an Rmarkdown document.
+
+A Rmarkdown document is the combination of a Markdown document with chunks of `R` code in the middle that are evaluated using an `R` package called `knitr`.
+
+Rmarkdown documents can be used interactively, or they can be turned into beautiful HTML documents or other types (e.g. PDF, Word, ...) if you click on the button "Knit" on top.
+
+The benefits of using an Rmarkdown document is that you have your text, scripts, results, plots and tables in a single place.
+
+You can edit the current Rmarkdown file to add your own notes to it and to try out or even modify the `R` code. Before you do that, do save your Rmarkdown file under a different name, so that you can go back to the original version if you need to.
+
+If you want to extract all the R code from the Rmarkdown document, to focus on code only, just do:
+
+```{r purl, eval = FALSE}
+# file.remove("dwf_R_course_2025.R") # uncomment and run to remove existing file
+knitr::purl("dwf_R_course_2025.Rmd")
+```
+
+**Note:** it will create a file called `dwf_R_course_2025.R` but it won't overwrite it if it already exists. So, if you want some changes to be taken into account, make sure you delete the `R` file beforehand.
+
+### Basic Markdown syntax
+
+Just write plain text in the script. You can use different number of stars to indicate:
+
+-   `*italic*` -\> *italic*
+-   `**bold**` -\> **bold**
+-   `***both***` -\> ***both***
+
+### Basic `knitr` syntax
+
+Use ```` ```{r} ```` to start an `R` chunk and ```` ``` ```` to close it.
+
+For example if you type `1 + 1` within a chunk, it will be displayed as:
+
+```{r one plus one}
+1 + 1
+```
+Then, to evaluate the chunk, just press CTRL-R after having put your mouse cursor inside the chunk (anywhere).
+
+You can learn more about Rmarkdown from [this online book](https://bookdown.org/yihui/rmarkdown/), or if you already know a little, the [RStudio cheatsheet](https://raw.githubusercontent.com/rstudio/cheatsheets/main/rmarkdown.pdf) will help you to refresh your memory.
+
+------------------------------------------------------------------------
+
+# Part 1: Creating Maps in R with `ggplot2` and `sf`
+
+## 1.1 Setting Up the Environment
+
+Spatial mapping is a powerful tool in data analysis, offering insights into spatial relationships, geographic trends, and resource distributions. In ecology, for example, mapping is crucial for understanding species ranges, monitoring biodiversity, and identifying areas for conservation. Maps can combine data such as species distributions, sample collection points, and environmental variables, providing a visual summary of complex systems.
+
+R is an excellent platform for spatial mapping due to its flexibility and the availability of specialized libraries. The `sf` package (Simple Features) is widely used for handling spatial data. It supports reading, manipulating, and plotting vector data like points, lines, and polygons. When combined with `ggplot2`, it allows users to create detailed, publication-ready maps. Another useful package is `rnaturalearth`, which provides freely available geographic datasets, including country boundaries and coastlines.
+
+To follow this course, you’ll need several libraries. Install them using the following command:
+
+```{r install packages, eval = FALSE}
+install.packages(c("ggplot2", "sf", "rnaturalearth", "rnaturalearthdata", "grid", "ggforce", "readr", "tidyr", "dplyr", "adegenet", "pegas", "poppr", "hierfstat", "lattice", "ggpubr"))
+```
+
+Load the libraries:
+
+```{r load packages, echo = TRUE, results = 'hide'}
+library(ggplot2)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(grid)
+library(ggforce)
+library(readr)
+library(tidyr)
+library(dplyr)
+library(adegenet)
+library(pegas)
+library(poppr)
+library(hierfstat)
+library(lattice)
+library(stringr)
+library(ggpubr)
+```
+
+------------------------------------------------------------------------
+
+## 1.2 Plotting Global Landmass with `sf` and `ggplot2`
+
+Mapping starts with creating a base layer representing the landmass. This foundational layer provides geographic context for species distributions, sample locations, environmental overlays, etc. In this course, we use the `rnaturalearth` package to access global datasets.
+
+`rnaturalearth` data includes high-quality, freely available maps for country boundaries, coastlines, and more. These datasets are provided in different resolutions: “small” (low detail), “medium” (balanced), and “large” (high detail). For most applications, the medium resolution is appropriate.
+
+To begin, load the world shapefile:
+
+```{r load world shapefile}
+world <- ne_countries(scale = "medium", returnclass = "sf")
+```
+
+This command retrieves global landmass data as a Simple Features (`sf`) object. The `sf` format simplifies working with spatial data in `R` by integrating geometric and attribute information.
+
+Inspect the dataset:
+
+```{r examine world shapefile, eval=FALSE}
+print(world)
+summary(world)
+```
+
+The `world` object contains key columns like:
+- `name`: Country name
+- `region_un`: Geographic region (e.g., Africa, Asia)
+- `geometry`: Polygon data for each country
+
+Let’s create a basic map, using `geom_sf()`
+
+```{r plot basic world map}
+ggplot(data = world) +
+  geom_sf(fill = "grey80", color = "white") +
+  theme_minimal()
+```
+
+This map shows the landmass in light gray, with white borders. 
+
+------------------------------------------------------------------------
+
+We can customize the map by changing colours, adding titles, or adjusting themes. A simple example:
+
+```{r modify basic world map aesthetics}
+ggplot(data = world) +
+  geom_sf(fill = "lightblue", color = "black") +
+  theme_minimal() +
+  labs(title = "World map with modified aesthetics",
+       subtitle = "Global landmass visualization")
+
+```
+
+------------------------------------------------------------------------
+
+## 1.3 Adding Species Distribution
+
+Species distribution data can be used to create maps that show the geographic range of a species, often derived from field observations, historical data, or modeling. Here, we use shapefiles from the *IUCN Red List*, a database of the global conservation status and extinction risk of biological species. A lot of information is available for these species, including various forms of assessment of the conservation status and geographic range of species.
+
+Usually, you would download a shapefile for a species' distribution from the website. But we are supplying it to you for the course. The distribution data typically includes multiple files (.shp, .shx, .dbf), and these should be kept together. They can be found in the folder `data`. Use `st_read()` from the `sf` package to load it:
+
+```{r read in species distro shapefile}
+species <- st_read("data/data_0.shp")
+```
+
+Inspect the shapefile:
+
+```{r examine species distro shapefile}
+species
+```
+
+The `species` object includes:
+
+* Attribute data: Species name, region, and various metadata.
+* Geometry: Polygons defining the ranges of features.
+
+To visualize the range, we overlay it on the landmass map, adding a second `geom_sf()`. 
+
+**NOTE:** we now move `data =` into `geom_sf()`, as we have multiple sources of data.
+
+```{r plot species distro on basic worldmap}
+ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  geom_sf(data = species, fill = "darkorange", color = "black", alpha = 0.5) +
+  theme_minimal() +
+  labs(title = "Species Distribution",
+       subtitle = "Lynx lynx")
+```
+
+For the two shapes we have plotted (the landmass, and the species distribution), the `fill` argument controls the polygon colour, the `color` argument controls the outline colour, and `alpha` adjusts the transparency of the shape(s). Transparency can be very useful when combining multiple layers, improving visibility of underlying features.
+
+------------------------------------------------------------------------
+
+## 1.4 Adding Population Locations with `geom_point()`
+
+Now we can visualize from where our samples originate. Here, we will have one coordinate per population. In other cases, you may have separate coordinates for each sample.
+
+Of course, in the context of other types of studies, these points do not need to represent genetic samples. They could be observational data, camera trap sites, environmental measurements, etc. etc.
+
+We have a text file that contains the information we need in a tab-delimited text file. We can load the data into R like this:
+
+```{r load sample info}
+pop_info <- read.table("data/pop_info.txt", header=TRUE)
+```
+
+The `header` argument specifies if the first row contains the name of the column (true in our case).
+
+Let's check what was in the file. Note, this file does not have many lines, so we do not use the `head()` function to preview the first lines.
+
+```{r show what is in pop_info}
+pop_info
+```
+
+------------------------------------------------------------------------
+
+We can now use this information to plot the population locations. To do so we add `geom_point()` within which we specify that the coordinates can be found in the `longitude` and `latitude` columns:
+
+```{r plot points per pop on basic worldmap}
+ggplot() +
+  geom_sf(data = world, fill = "grey90", color = "white") +
+  geom_point(data = pop_info, aes(x = longitude, y = latitude), color = "red", size = 3) +
+  theme_minimal() +
+  labs(title = "Population Locations on Map")
+```
+
+------------------------------------------------------------------------
+
+## 1.5 Setting Map Limits
+
+When creating maps, the default extent often includes unnecessary areas, making the visualization less focused. Adjusting map limits allows us to zoom in on the regions of interest, whether they correspond to species distributions, sample locations, or both. This section demonstrates how to dynamically set limits using bounding boxes, ensuring the map highlights the relevant area.
+
+Adjusting map limits:
+
+* Emphasizes the study area and avoids visual clutter
+* Improves readability and interpretability for readers
+* Ensures the map reflects the geographic focus of our study
+
+------------------------------------------------------------------------
+
+### Zooming in on Species Distribution
+
+The species distribution data (shapefile) includes a bounding box. We can use the `st_bbox()` function from the `sf` package to extract the bounding box:
+
+```{r bounding box using species distro}
+species_bbox <- st_bbox(species)
+```
+
+The bounding box contains:
+
+* `xmin` and `xmax`: minimum and maximum longitude values.
+* `ymin` and `ymax`: minimum and maximum latitude values.
+
+We can use these values to set the map limits with `coord_sf()`:
+
+```{r plot using species distro to limit map extent}
+ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  geom_sf(data = species, fill = "darkorange", color="black", alpha = 0.5) +
+  coord_sf(xlim = c(species_bbox$xmin, species_bbox$xmax),
+           ylim = c(species_bbox$ymin, species_bbox$ymax)) +
+  theme_minimal() +
+  labs(title = "Map focused on species' distribution")  
+```
+
+------------------------------------------------------------------------
+
+### Zooming in on Populations / Sample Locations
+
+If you are plotting sample points, you can also calculate the bounding box based on the longitude and latitude columns in your data. We make use of data in the `latitude` and `longitude` columns of the object `pop_info`:
+
+```{r bounding box using pop_info}
+sample_bbox <- list(
+  xmin = min(pop_info$longitude),
+  xmax = max(pop_info$longitude),
+  ymin = min(pop_info$latitude),
+  ymax = max(pop_info$latitude)
+)
+```
+
+Now we can use `coord_sf` with the information in `sample_bbox` to restrict the map view:
+
+```{r plot using pop info to limit map extent}
+ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  geom_point(data = pop_info, aes(x = longitude, y = latitude), size = 3) +
+  coord_sf(xlim = c(sample_bbox$xmin, sample_bbox$xmax),
+           ylim = c(sample_bbox$ymin, sample_bbox$ymax)) +
+  theme_minimal() +
+  labs(title = "Map focused on sample locations")
+```
+
+This adjusts the map dynamically to encompass the sample locations. If we would add more populations later, the map would automatically expand to include them if necessary.
+
+As this feels rather "zoomed in", we can add additional buffer around the sample locations. We add or subtract from the values in `sample_bbox` like so:  
+
+```{r plot using sample info to limit map extent adjusted}
+ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  geom_point(data = pop_info, aes(x = longitude, y = latitude), size = 3) +
+  coord_sf(xlim = c(sample_bbox$xmin-4, sample_bbox$xmax+4),
+           ylim = c(sample_bbox$ymin-4, sample_bbox$ymax+4)) +
+  theme_minimal() +
+  labs(title = "Map focused on sample locations")
+```
+
+To extend the plot, we subtracted from the "min" values, and added to the "max" values.
+
+------------------------------------------------------------------------
+
+### Manually determine extent of map
+
+We can also determine the extent of the map manually:
+
+```{r manual bounding box}
+manual_bbox <- list(
+  xmin = 0,
+  xmax = 55,
+  ymin = 35,
+  ymax = 65
+)
+```
+
+This can be useful, if you know the extent of your sampling (or other relevant info), and want to ensure that certain features do or do not appear on the map. 
+
+```{r manually determing map extent}
+ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  coord_sf(xlim = c(manual_bbox$xmin, manual_bbox$xmax),
+           ylim = c(manual_bbox$ymin, manual_bbox$ymax)) +
+  theme_minimal() +
+  labs(title = "Map focused on area chosen manually")
+```
+
+------------------------------------------------------------------------
+
+### A map showing species distribution and sample locations, with manual bounding box
+
+Let's plot a map with all the elements that interest us, and use the manual bounding box.
+
+* a `geom_sf` for the world map
+* a `geom_sf` for the species distribution
+* a `geom_point` for our populations
+* a `coord_sf` for our manual bounding box
+
+```{r plot combining all elements}
+ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  geom_sf(data = species, fill = "darkorange", color="black", alpha = 0.5) +
+  geom_point(data = pop_info, aes(x = longitude, y = latitude), size = 3) +
+  coord_sf(xlim = c(manual_bbox$xmin, manual_bbox$xmax),
+           ylim = c(manual_bbox$ymin, manual_bbox$ymax)) +
+  theme_minimal() +
+  labs(title = "Species distribution and sampled populations")
+```
+
+
+------------------------------------------------------------------------
+
+## 1.6 Customizing Colors with Manual Scales
+
+With the map now focused on the relevant area, we can discuss colour customization in some more detail. While `ggplot2` provides default color schemes, they may not always meet our needs. Manual color scales allow us to:
+
+* Assign specific colors to categories (eg subspecies).
+* Maintain consistency across multiple plots, maps, and figures.
+* Enhance clarity by associating colors with ... (facts?)
+
+------------------------------------------------------------------------
+
+### Customizing Polygon Colors
+
+To customize polygon colors, we can use `scale_fill_manual()`. With this, we can manually decide the colours when using `fill` in the plot.
+
+This could be relevant for the species distribution, as we have multiple "presence categories", reflecting our certainty about the presence of the species in an area. 
+
+```{r IUCN presence table}
+presence_table <- read.csv("data/IUCN_presence_code.txt", sep="\t", header=TRUE)
+
+presence_table
+```
+
+We can check which of these are included in the information we have for the lynx. They are found in `species$PRESENCE`
+
+```{r }
+species$PRESENCE
+```
+
+Now let's use `scale_fill_manual()` to select the colours of the two categories we have in Europe (1 & 3), and modify the legend to tell us what the colour means.
+
+```{r colouring by species presence code}
+ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  geom_sf(data = species, aes(fill = as.factor(PRESENCE)), color="black", alpha = 0.5) +
+  coord_sf(xlim = c(manual_bbox$xmin, manual_bbox$xmax),
+           ylim = c(manual_bbox$ymin, manual_bbox$ymax)) +
+  scale_fill_manual(values = c("1" = "darkorange", "3" = "purple"), 
+                    labels = c("1" = "Extant", "3" = "Possibly Extant")) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  labs(title = "Using scale_fill_manual() to chose colours for the plot",
+       fill = "Presence Category")
+```
+
+Here, we have 
+
+* moved `fill` into `aes()` of the `geom_sf` because we are working with a specific subset of the `species` object (namely, the column "PRESENCE"). As this variable is encoded as a number, but is not a continuous variable, we add `as.factor()` to treat them as distinct categories (rather than numbers on a scale).
+* we have added `scale_fill_manual()`, which contains two entries:
+  * we have `values` to determine the colours based on values in "PRESENCE"
+  * we have `labels` to determine what the legend will tell us regarding these values in "PRESENCE"
+* we have added `theme()` so that we can use `legend.position` to chose where the legend goes
+* we have added `fill` to `labs()` to rename the title of the legend for the fill category
+
+------------------------------------------------------------------------
+
+### Customizing Point Colors
+
+Similar to polygons, we may have different groupings in the data we plot as points. We can use `scale_color_manual()` to customize the colour of our points. In our example, we will differentiate the points by subspecies:
+
+```{r colour points by subspecies}
+ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  geom_point(data = pop_info, aes(x = longitude, y = latitude, color = subspecies), size = 3) +
+  coord_sf(xlim = c(manual_bbox$xmin, manual_bbox$xmax),
+           ylim = c(manual_bbox$ymin, manual_bbox$ymax)) +
+  scale_color_manual(values = c("L.l.lynx" = "red", 
+                                "L.l.carpathicus" = "blue", 
+                                "unknown" = "black")) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  labs(title = "Populations indicated with custom colors for subspecies",
+       color = "Subspecies")
+
+```
+
+As you can see, we use the information in the subspecies column of `pop_info` to determine the colour. We use `values` in `scale_color_manual()` to give specific subspecies a specific colour (for some populations, subspecies is "unknown").
+
+------------------------------------------------------------------------
+
+Sometimes colours may not work well together. So let's check what it looks like with the species distribution also included in the map.
+
+```{r custom polygon and point colours}
+ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  geom_sf(data = species, aes(fill = as.factor(PRESENCE)), color="black", alpha = 0.5) +
+  geom_point(data = pop_info, aes(x = longitude, y = latitude, color = subspecies), size = 3) +
+  coord_sf(xlim = c(manual_bbox$xmin, manual_bbox$xmax),
+           ylim = c(manual_bbox$ymin, manual_bbox$ymax)) +
+  scale_fill_manual(values = c("1" = "darkorange", "3" = "purple"), 
+                    labels = c("1" = "Extant", "3" = "Possibly Extant")) +
+  scale_color_manual(values = c("L.l.lynx" = "red", 
+                                "L.l.carpathicus" = "blue", 
+                                "unknown" = "black")) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        legend.box = "vertical", 
+        legend.box.just = "center") +
+  labs(title = "Polygons and points with custom colours") +
+  guides(color = guide_legend(title = "Subspecies"),
+         fill = guide_legend(title = "Presence Category"))
+```
+
+Let's simplify the design, by including the "possibly extant" category of the species' distribution in the standard colouration again, as this category has no bearing on the populations we are looking at.
+
+```{r colour points by subspecies 2}
+ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  geom_sf(data = species, fill = "darkorange", color="black", alpha = 0.5) +
+  geom_point(data = pop_info, aes(x = longitude, y = latitude, color = subspecies), size = 3) +
+  coord_sf(xlim = c(manual_bbox$xmin, manual_bbox$xmax),
+           ylim = c(manual_bbox$ymin, manual_bbox$ymax)) +
+  scale_color_manual(values = c("L.l.lynx" = "red", 
+                                "L.l.carpathicus" = "blue", 
+                                "unknown" = "black")) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  labs(title = "Points with custom colours over species distribution")
+```
+
+------------------------------------------------------------------------
+
+## 1.7 Additional Customization
+
+Once you’ve created a map, adding additional customization and exporting it for sharing or publication are essential steps. 
+
+------------------------------------------------------------------------
+
+### Modifying Size and Shape of Points
+
+We can change to a shape that has both a `fill` and a `color`. Here, `color` determines the colour of the outline.
+
+```{r change shape of points 1}
+ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  geom_sf(data = species, fill = "darkorange", color="black", alpha = 0.5) +
+  geom_point(data = pop_info, aes(x = longitude, y = latitude, fill = subspecies), shape = 23, color = "white", stroke = 1, size = 5) +
+  coord_sf(xlim = c(manual_bbox$xmin, manual_bbox$xmax),
+           ylim = c(manual_bbox$ymin, manual_bbox$ymax)) +
+  scale_fill_manual(values = c("L.l.lynx" = "red", 
+                                "L.l.carpathicus" = "blue", 
+                                "unknown" = "black")) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  labs(title = "Points with custom colours or shapes 1")
+```
+
+**NOTE:** we had to change the manual scale from color to fill, as we wanted the fill colour to be determined by subspecies.
+
+------------------------------------------------------------------------
+
+Sometimes it is better to resist using colours for everything, and fall back on shapes. Let's try different shapes for the subspecies, and give them a dark colour so that they have high contrast to the colour in the map. For this, we can use `scale_shape_manual()`
+
+```{r change shape of points 2}
+ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  geom_sf(data = species, fill = "darkorange", color="black", alpha = 0.5) +
+  geom_point(data = pop_info, aes(x = longitude, y = latitude, shape = subspecies), fill = "grey10", color = "black", stroke = 1, size = 5) +
+  coord_sf(xlim = c(manual_bbox$xmin, manual_bbox$xmax),
+           ylim = c(manual_bbox$ymin, manual_bbox$ymax)) +
+  scale_shape_manual(values = c("L.l.lynx" = 21,"L.l.carpathicus" = 22,"unknown" = 23)) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  labs(title = "Points with custom colours or shapes 2") 
+```
+
+------------------------------------------------------------------------
+
+Here's a picture displaying the code of the shapes.
+
+![R shape codes](images/pch-symbols.png)
+
+------------------------------------------------------------------------
+
+### Adding Text Annotations
+
+Annotations help highlight specific areas or provide additional context. For example, you can annotate a region with text, arrows, or shapes.
+
+```{r include text annotation}
+ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  geom_sf(data = species, fill = "darkorange", color="black", alpha = 0.5) +
+  geom_point(data = pop_info, aes(x = longitude, y = latitude, shape = subspecies), fill = "grey10", color = "black", stroke = 1, size = 3) +
+  annotate("text", x = 36, y = 57, label = "L.l.lynx", size = 3, color = "black", fontface = "italic") +
+  annotate("text", x = 22.5, y = 46, label = "L.l.carpathicus", size = 3, color = "black", fontface = "italic") +
+  coord_sf(xlim = c(manual_bbox$xmin, manual_bbox$xmax),
+           ylim = c(manual_bbox$ymin, manual_bbox$ymax)) +
+  scale_shape_manual(values = c("L.l.lynx" = 21,"L.l.carpathicus" = 22,"unknown" = 23)) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  labs(title = "Including Text Annotations") 
+```
+
+Here, `annotate()` with the "text" argument adds a text label to the map
+
+* the location is defined using geographic coordinates (`x`, `y`)
+* the font size is controlled using `size`
+* the style (here "italics") is defined using `fontface`; other options are "plain", "bold" or "bold.italic"
+
+------------------------------------------------------------------------
+
+If we add the information about subspecies using text annotation, we no longer need to do it with the shape of the points. 
+
+```{r simplify design of map}
+ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  geom_sf(data = species, fill = "darkorange", color="black", alpha = 0.5) +
+  geom_point(data = pop_info, aes(x = longitude, y = latitude), shape = 21, fill = "grey10", color = "black", stroke = 1, size = 3) +
+  annotate("text", x = 36, y = 57, label = "L.l.lynx", size = 3, color = "black", fontface = "italic") +
+  annotate("text", x = 22.5, y = 46, label = "L.l.carpathicus", size = 3, color = "black", fontface = "italic") +
+  coord_sf(xlim = c(manual_bbox$xmin, manual_bbox$xmax), ylim = c(manual_bbox$ymin, manual_bbox$ymax)) +
+  theme_minimal() +
+  labs(title = "Simplify Design") 
+```
+
+This version is less "hectic" - there are fewer details/colours/differences drawing our eyes to different parts of the map.
+
+However, we have lost a little bit of relevant information: for some of the populations, we did not have information about what subspecies they belonged to.
+
+------------------------------------------------------------------------
+
+### Adding Arrows
+
+We can use `annotate()` with the "segment" argument to draw arrows and combine it with `arrow()` to point at interesting things:
+
+```{r add arrows}
+ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  geom_sf(data = species, fill = "darkorange", color="black", alpha = 0.5) +
+  geom_point(data = pop_info, aes(x = longitude, y = latitude), shape = 21, fill = "grey10", color = "black", stroke = 1, size = 3) +
+  coord_sf(xlim = c(manual_bbox$xmin, manual_bbox$xmax), ylim = c(manual_bbox$ymin, manual_bbox$ymax)) +
+  theme_minimal() +
+  labs(title = "Adding Arrows") +
+  annotate("text", x = 36, y = 57, label = "L.l.lynx", size = 3, color = "black", fontface = "italic") +
+  annotate("text", x = 22.5, y = 46, label = "L.l.carpathicus", size = 3, color = "black", fontface = "italic") +  
+  annotate("segment", x = 5, xend = 6.7, y = 50, yend = 49, arrow = arrow(length = unit(0.3, "cm"), type = "closed"), color = "blue", linewidth = 1) +
+  annotate("segment", x = 10.4, xend = 12.3, y = 50.3, yend = 49.3, arrow = arrow(length = unit(0.3, "cm"), type = "closed"), color = "blue", linewidth = 1)  
+```
+
+------------------------------------------------------------------------
+
+### Adding a Circle or Ellipse 
+
+We can also highlight an area by adding a circle to the plot. This uses `geom_circle()` from the `ggforce` package.
+
+```{r adding a circle 1}
+ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  geom_sf(data = species, fill = "darkorange", color="black", alpha = 0.5) +
+  geom_point(data = pop_info, aes(x = longitude, y = latitude), shape = 21, fill = "grey10", color = "black", stroke = 1, size = 3) +
+  geom_circle(aes(x0 = 14.7, y0 = 45.5, r = 2), color = "purple", fill = NA, linewidth = 1.5) +
+  coord_sf(xlim = c(manual_bbox$xmin, manual_bbox$xmax),
+           ylim = c(manual_bbox$ymin, manual_bbox$ymax)) +
+  theme_minimal() +
+  labs(title = "Adding a Circle") +
+  annotate("text", x = 36, y = 57, label = "L.l.lynx", size = 3, color = "black", fontface = "italic") +
+  annotate("text", x = 22.5, y = 46, label = "L.l.carpathicus", size = 3, color = "black", fontface = "italic")
+```
+
+Here
+
+* `x0` and `y0` specify the centre of the circle
+* `r` specifies the radius
+* `color` specifies the line colour
+* `fill = NA` keeps it "open" (i.e. no fill)
+* `linewidth` specifies how thick the line is drawn
+
+**NOTE:** we do not obtain a round circle because the scale of the x and y axes is not the same in the plot.
+
+------------------------------------------------------------------------
+
+We can also fill the circle (and add transparency to the fill), or modify the style of line:
+
+```{r adding a circle 2}
+ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  geom_sf(data = species, fill = "darkorange", color="black", alpha = 0.5) +
+  geom_point(data = pop_info, aes(x = longitude, y = latitude), shape = 21, fill = "grey10", color = "black", stroke = 1, size = 3) +
+  geom_circle(aes(x0 = 14.7, y0 = 45.5, r = 2), color = "purple", fill = "yellow", alpha = 0.3, linewidth = 1.5, linetype = "dotted") +
+  coord_sf(xlim = c(manual_bbox$xmin, manual_bbox$xmax),
+           ylim = c(manual_bbox$ymin, manual_bbox$ymax)) +
+  theme_minimal() +
+  labs(title = "Customizing the Circle") +
+  annotate("text", x = 36, y = 57, label = "L.l.lynx", size = 3, color = "black", fontface = "italic") +
+  annotate("text", x = 22.5, y = 46, label = "L.l.carpathicus", size = 3, color = "black", fontface = "italic")
+```
+
+Here
+
+* `alpha` specifies the level of transparency of the colour `fill`
+* `linetype` specifies what kind of line is drawn. Options include: "solid" (default), "dashed", "dotted", "dotdash", "twodash"
+
+------------------------------------------------------------------------
+
+If we want an ellipse rather than a circle, we can use `geom_ellipse()` from `ggforce`. This allows us to specify different radii for x and y directions:
+
+```{r adding an ellipse}
+ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  geom_sf(data = species, fill = "darkorange", color="black", alpha = 0.5) +
+  geom_point(data = pop_info, aes(x = longitude, y = latitude), shape = 21, fill = "grey10", color = "black", stroke = 1, size = 3) +
+  geom_ellipse(aes(x0 = 15.8, y0 = 45.1, a = 1.5, b = 3.5, angle = 45), color = "purple", fill = NA, linewidth = 1.5) +
+  coord_sf(xlim = c(manual_bbox$xmin, manual_bbox$xmax),
+           ylim = c(manual_bbox$ymin, manual_bbox$ymax)) +
+  theme_minimal() +
+  labs(title = "Adding an Ellipse") +
+  annotate("text", x = 36, y = 57, label = "L.l.lynx", size = 3, color = "black", fontface = "italic") +
+  annotate("text", x = 22.5, y = 46, label = "L.l.carpathicus", size = 3, color = "black", fontface = "italic")
+```
+
+Here
+
+* again, `x0` and `y0` specify the center of the ellipse
+* `a` specifies the radius along the x-axis
+* `b` specifies the radius along the y-axis
+* `angle` specifies rotation (in degrees)
+
+------------------------------------------------------------------------
+
+### Modifying Axis Labels and Text Appearance
+
+We can modify axis labels, adjust text size, and change font face (bold, italics, etc.). 
+
+As you have hopefully noticed, we can use the `labs()` function to customize labels, this includes the title and subtitle, and can also be used to add custom axis labels (by default, axis labels are taken from the data used to generate the plot).
+
+```{r label customization 1}
+ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  geom_sf(data = species, fill = "darkorange", color="black", alpha = 0.5) +
+  geom_point(data = pop_info, aes(x = longitude, y = latitude), shape = 21, fill = "grey10", color = "black", stroke = 1, size = 3) +
+  coord_sf(xlim = c(manual_bbox$xmin, manual_bbox$xmax),
+           ylim = c(manual_bbox$ymin, manual_bbox$ymax)) +
+  theme_minimal() +
+  annotate("text", x = 36, y = 57, label = "L.l.lynx", size = 3, color = "black", fontface = "italic") +
+  annotate("text", x = 22.5, y = 46, label = "L.l.carpathicus", size = 3, color = "black", fontface = "italic") +
+  labs(title = "Axis Labels and Text Appearance",
+       subtitle = "custom subtitle",
+       x = "custom x-axis label",
+       y = "custom y-axis label")
+```
+
+------------------------------------------------------------------------
+
+We can use this in conjunction with options in `theme()` that control the size, font, and appearance of axis labels and titles. 
+
+```{r label customization 2}
+ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  geom_sf(data = species, fill = "darkorange", color="black", alpha = 0.5) +
+  geom_point(data = pop_info, aes(x = longitude, y = latitude), shape = 21, fill = "grey10", color = "black", stroke = 1, size = 3) +
+  coord_sf(xlim = c(manual_bbox$xmin, manual_bbox$xmax),
+           ylim = c(manual_bbox$ymin, manual_bbox$ymax)) +
+  theme_minimal() +
+  annotate("text", x = 36, y = 57, label = "L.l.lynx", size = 3, color = "black", fontface = "italic") +
+  annotate("text", x = 22.5, y = 46, label = "L.l.carpathicus", size = 3, color = "black", fontface = "italic") +
+  labs(title = "Axis Labels and Text Appearance",
+       subtitle = "custom subtitle",
+       x = "custom x-axis label",
+       y = "custom y-axis label") +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),  # centered, large, bold title
+    plot.subtitle = element_text(size = 14, face = "italic"),  # italic subtitle    
+    axis.title.x = element_text(size = 14, face = "bold.italic"),  # x-axis label: large, bold + italic
+    axis.title.y = element_text(face = "italic"),  # y-axis label: italic
+    axis.text = element_text(size = 11),  # axis tick labels
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+Here were are:
+
+* making the x-axis label large and bold
+* making the y-axis label italic
+* making the "tick labels" larger
+* centering the title, and making it large and bold
+* making the subtitle larger and italic
+
+You can see that a common element here is `element_text()`, within which we have the options we can adjust. 
+
+* `size` specifies the font size, 
+* `face` specifies the font face (bold, italic, bold.italic, plain), 
+* `hjust` specifies the horizontal justification (0 = left, 0.5 = middle, 1 = right), 
+* `angle` specifies the rotation of the label (here in combination with `hjust=1` so it is justified appropriately).
+
+You should also note, that we can add `.x` or `.y` if we want to restrain modifications to a specific axis. Without this, the customization will modify both axes.
+
+------------------------------------------------------------------------
+
+Here's a plot with sensible label and text customization:
+
+```{r final map with customizations}
+ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  geom_sf(data = species, fill = "darkorange", color="black", alpha = 0.5) +
+  geom_point(data = pop_info, aes(x = longitude, y = latitude), shape = 21, fill = "grey10", color = "black", stroke = 1, size = 3) +
+  coord_sf(xlim = c(manual_bbox$xmin, manual_bbox$xmax),
+           ylim = c(manual_bbox$ymin, manual_bbox$ymax)) +
+  theme_minimal() +
+  annotate("text", x = 36, y = 57, label = "L.l.lynx", size = 3, color = "black", fontface = "italic") +
+  annotate("text", x = 22.5, y = 46, label = "L.l.carpathicus", size = 3, color = "black", fontface = "italic") +
+  labs(x = "Longitude",
+       y = "Latitude") +
+  theme(axis.title = element_text(size = 12, face = "bold"),  
+    axis.text = element_text(size = 10)
+  )
+```
+
+We removed the plot title, as this is usually not included in figures with multiple panels. 
+
+Once we have more results (PART 2 and PART 3 of the course), we can add customization to the map to draw attention to something relevant to our study.
+
+
+------------------------------------------------------------------------
+
+
+# Part 2: Plotting STRUCTURE Results with `R`
+
+This morning, you should have generated results for lynx genetic data using an application called STRUCTURE. Here, you will learn how to read a STRUCTURE-results file into `R` and how to make a figure from the relevant part of the file. For the purpose of the course, we will focus on one aspect of the study: namely, the subspecies. So we will work with the results file for K = 2.
+
+------------------------------------------------------------------------
+
+STRUCTURE plots are widely used in population genetics and genomics to visualize genetic structure and admixture within and between populations. 
+
+These stacked barplots display the proportional ancestry of individuals across predefined genetic clusters, which can inform us about:
+
+* population differentiation 
+* gene flow / migration
+* hybridization 
+
+These plots are popular, because they can summarize complex genetic data in an intuitive visual format.
+
+------------------------------------------------------------------------
+
+## 2.1 Reading the Data
+
+We need to read the data into `R`. Unfortunately, the data is not formatted in a way that is convenient for reading into `R`, so we need to take a couple steps to do so.
+
+```{r read in lines}
+# read the file as a character vector
+all_lines <- readLines("data/STRUCTURE_K2.txt")
+
+# preview the first lines to ensure it worked despite error message
+head(all_lines)
+```
+
+Here
+
+* `readLines()` reads the entire file as a vector of character strings. Each element of the vector corresponds to one line of text in the file.
+* we use `head()` to preview the first lines to ensure we have read the information, despite the error message.
+
+**NOTE:** the error message occurred, because the file did not end in a so-called "newline" character.
+
+------------------------------------------------------------------------
+
+## 2.2 Locate Start of the Data
+
+Our results begin after a specific line containing the following header:
+
+>"        Label (%Miss) Pop:  Inferred clusters"
+
+We will find this line with the `str_which()` function from `stringr`. This will give es the position (called index) of the line, which we can save in an object `start`. However, our data actually starts one line after this, so we add + 1 to the code, to get the start of our results.
+
+```{r index of start}
+start <- str_which(all_lines, "Inferred clusters") + 1
+```
+
+Here, we have two elements within `str_which()`
+
+* the first is our object we are searching through (`all_lines`)
+* the second is text we are searching for ("Inferred clusters")
+
+Now we know where in `all_lines` the results we are interested in start: namely, at `start`.
+
+------------------------------------------------------------------------
+
+## 2.3 Locate the End of the Data
+
+We know that our results are followed by multiple empty lines. We can use that knowledge to specify when the data ends in `all_lines`.
+
+```{r index of end}
+# find empty lines
+empty_lines <- which(all_lines == "")
+
+# first empty line after "start", subtract one to get index of end of results
+end <- empty_lines[empty_lines > start][1] - 1
+```
+
+Here
+
+* we have an object with the index of all empty lines (`empty_lines`)
+* and an object where our results end (`end`)
+  * we know that the data ends one line before the first empty line after `start`
+
+**NOTE:** as we are likely to have many empty lines in the document, we take the first occurrence using an index `[1]`, so we extract only the rows before the first occurrence.
+
+------------------------------------------------------------------------
+
+## 2.4 Extracting the Data
+
+We now know where in `all_lines` our results `start` and `end`, so we can extract what we need.
+
+When working with raw text data, inconsistencies in formatting can make data extraction and processing difficult. One issue in our dataset is the presence of a population entry followed by a colon (`:`) and varying amounts of whitespace (e.g., "1 : "). Since we intend to split the data into structured columns, we need to remove this formatting inconsistency as well.
+
+```{r result_lines}
+all_lines[start:end] |>
+  str_squish() |>
+  str_remove_all(":") -> result_lines
+```
+
+Here, 
+
+* we are indexing what we want from `all_lines`, using the number (ie index) stored in the objects `start` and `end`
+* `str_squish()` removes whitespace at the start and end of a string, and replaces all internal whitespace with a single space 
+* `str_remove_all(":")` removes the colons
+
+In combination, this will extract the lines from `all_lines` we want, and enable splitting data into columns by removing formatting inconsistencies and unwanted characters.
+
+Let's confirm it worked
+
+```{r confirm result_lines}
+head(result_lines)
+```
+
+------------------------------------------------------------------------
+
+## 2.5 Specify the Header
+
+As we want to be able to specify columns in the data, we will make a vector with the column names.
+
+```{r specify header}
+# manually specify the header
+header <- c("Sample_Number", "Sample_ID", "Missing_Data", "Population", "Cluster_1", "Cluster_2")
+```
+
+**NOTE:** here we know that we have two columns containing the proportion of assignment to two genetic clusters ("Cluster_1", "Cluster_2").
+
+------------------------------------------------------------------------
+
+## 2.6 Making a DataFrame with our Data
+
+Once we have prepared the data, the next step is to read it into a structured dataframe for further analysis. This is done using `read.table()`.
+
+```{r make dataframe}
+# read the data, with custom column names
+results_df <- read.table(text = result_lines, col.names = header)
+
+# preview
+head(results_df)
+```
+
+Here
+
+* `read.table()` is a function used to convert the cleaned character vector into a dataframe. 
+* `col.names = header` is used to provide the column names manually
+
+After successfully loading the data, we use `head(results_df)` to preview the first few rows of the `results_df` dataframe, to confirm that the data has been correctly parsed.
+
+------------------------------------------------------------------------
+
+## 2.7 Reshape Data to Long Format
+
+We need to reshape the data to "long format" using `pivot_longer()` from the `tidyr` package. 
+
+This will allow the two columns containing the proportion of assignment to a genetic cluster ("Cluster_1" and "Cluster_2") to be combined into a single column with corresponding values. This can then be used to generate a stacked barplot with `ggplot2`.
+
+We do not require all the information in `results_df`, so we will omit some of the column names in the following code.
+
+```{r convert to long format}
+# reshape the data from wide to long format
+results_df |>
+  select(Sample_ID, Population, Cluster_1, Cluster_2) |>
+  pivot_longer(cols = c("Cluster_1", "Cluster_2"),
+               names_to = "Cluster",
+               values_to = "Proportion") -> results_long
+
+# preview
+head(results_long)
+```
+
+------------------------------------------------------------------------
+
+## 2.8 Include Population Names
+
+So far, the populations have been identified by a number (1,2,3,etc). As we may want to use them in the plot, it is time to transform the numbers into actual population names. We can do that with the `dplyr` function `mutate()` in combination with `case_match()`. 
+
+```{r translate pop number to pop name}
+results_long <- results_long |>
+mutate(Population = case_match(Population,       # mutate value in Population, when find matching value
+                                 1 ~ "Estonia",
+                                 2 ~ "Latvia",
+                                 3 ~ "Poland",
+                                 4 ~ "Russia",
+                                 5 ~ "Slovenia",
+                                 6 ~ "Croatia",
+                                 7 ~ "Bavaria",
+                                 8 ~ "France",
+                                 9 ~ "Slovakia",
+                                 .default = "Unknown"))
+
+head(results_long)
+```
+
+
+------------------------------------------------------------------------
+
+Theoretically we could now plot the results. However, the default ordering of variables is often alphabetical. Often, we would prefer a custom order for plots. We will reorder `Sample_ID` based on a meaningful criterion — in this case, the population to which they belong.
+
+This is particularly useful when visualizing STRUCTURE results, where we analyze genetic clustering across different populations. 
+
+------------------------------------------------------------------------
+
+To ensure that samples are grouped correctly, we need to define an explicit order for the `Population` column. This is done by converting `Population` into a factor with a predefined order. In `R`, factors are categorical variables that can have an explicit order. If we don't set an order, `R` will use the default (alphabetical order).
+
+```{r pop as factor in custom order}
+# define the custom order of Population
+pop_order <- c(     
+    "Estonia", "Latvia", "Russia", "Poland",      # L.l.lynx
+    "Slovenia", "Slovakia", "Croatia",            # L.l.carpathicus
+    "Bavaria", "France")                          # unknown
+
+# population as factor with the order specified in pop_order
+results_long <- results_long |>
+  mutate(Population = factor(Population, levels = pop_order))
+
+# preview
+head(results_long)
+```
+
+**NOTE:** The `Population` column is now recognized as containing variables in the format of a factor (`<fctr>`), not a character string (`<chr>`).
+
+------------------------------------------------------------------------
+
+After defining the order in `Population` and transforming it into a factor, we want to ensure that `Sample_ID` follows this order in our plot. As `Sample_ID` is a categorical variable, we must convert it into a factor, ordered by `Population`.
+
+```{r sample as factor in custom}
+# Sample_ID as factor, ordered based on Population
+results_long <- results_long |>
+  arrange(Population) |>     # sorts dataframe by Population
+  mutate(Sample_ID = factor(Sample_ID, levels = unique(Sample_ID)))
+
+# Preview
+head(results_long)
+```
+
+Here
+
+* we use `arrange(Population)` to reorder the dataframe by `Population` (according to our predefined order in `pop_order`)
+* we convert `Sample_ID` into a factor, ensuring that `ggplot2` will recognize the new order
+
+**NOTE:** We had to use `unique(Sample_ID)` when defining the levels of the factor, because the dataframe is in long format. This means that several rows have the same entry for `Sample_ID`.
+
+------------------------------------------------------------------------
+
+## 2.9 Plot STRUCTURE Results using `ggplot2`
+
+Now we can plot our STRUCTURE results as a stacked barplot, with samples in our predefined order of `Population`.
+
+A stacked barplot is better than a regular barplot for this, because it allows us to visualize the composition of multiple categories within a single sample. In our case, a stacked barplot shows the assignment proportion of individuals to the two genetic clusters, using a single bar. This makes it easy to compare the relative proportions of clusters across samples.
+
+```{r stacked barplot}
+ggplot(results_long, aes(x = Sample_ID, y = Proportion, fill = Cluster)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(title = "Stacked Barplot",
+       x = "Sample",
+       y = "Assignment Proportion",
+       fill = "Cluster") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))  # rotate labels 
+```
+
+------------------------------------------------------------------------
+
+With so many individuals, including `Sample_ID` in the plot is relatively useless (at least, if we want to show it to someone else).
+
+Perhaps including information about the population will be better? We can also remove title and legend.
+
+```{r change label of stacked barplot 1}
+ggplot(results_long, aes(x = Sample_ID, y = Proportion, fill = Cluster)) +
+  geom_bar(stat = "identity") +
+  
+  # Replace Sample_ID labels with Population
+  # Using seq() to use only every second entry
+  scale_x_discrete(labels = results_long$Population[seq(1, nrow(results_long), by = 2)]) +  
+  
+  theme_minimal() +
+  labs(x = "Sample",
+       y = "Assignment Proportion") +
+  theme(legend.position = "none",
+        axis.text.x = element_text(size = 6, angle = 90, hjust = 1))  # make text smaller
+```
+
+This is still challenging to read, but at least we can get a sense of the population of origin of samples, and to which cluster they seem to belong.
+
+Here
+
+* the `scale_x_discrete()` function is used to customize the labels on the x-axis (`labels =`), by replacing the default sample labels with the corresponding population names from the `Population` column.
+* as we have two entries per `Sample_ID` in `results_long`, we use `seq(1, nrow(results_long), by = 2)` to only show every second entry.
+
+------------------------------------------------------------------------
+
+We can try to reduce it to one `Population` entry per population?
+
+```{r change label of stacked barplot 2}
+ggplot(results_long, aes(x = Sample_ID, y = Proportion, fill = Cluster)) +
+  geom_bar(stat = "identity", position = "stack") +
+  
+  # Replace Sample_ID labels with Population
+  # Need as.character(), otherwise we get Population as a number (because it is a factor)
+  # One per Population (remove duplicates)
+  scale_x_discrete(labels = function(x) {
+    pop_labels <- as.character(results_long$Population[match(x, results_long$Sample_ID)]) 
+    ifelse(duplicated(pop_labels), "", pop_labels) 
+  }) +
+  
+  theme_minimal() +
+  labs(x = "Sample", y = "Assignment Proportion", fill = "Cluster") +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Here
+
+* we use a short function within `scale_x_discrete()`
+* we create a vector of population labels `pop_labels`
+* `match(x, results_long$Sample_ID)` finds the positions of each `Sample_ID` in `results_long` for each `x` value (= `Sample_ID` values used for plotting)
+* `results_long$Population[...]` extracts the corresponding population value from `Population`
+* `as.character()` is used to convert the population information into character format because `Population` is a factor, and we don't want numeric labels
+* `ifelse(duplicated(pop_labels), "", pop_labels)` checks for duplicate values in `pop_labels` and `ifelse()` is used to replace it with an empty string (`""`) if it has already been displayed
+
+
+------------------------------------------------------------------------
+
+We can further improve upon this.
+
+Let's add vertical bars to separate the populations more clearly. And add the `Population` label in a way that is easier to read (centered).
+
+For that we need to two things:
+
+* find the mid-point of a `Population` (numerically speaking), where we want to have our population label
+* find the last `Sample_ID` of a population, after which we will draw a vertical line
+
+```{r determine mid and end of pops for stacked barplot}
+# determine the positions for population labels
+population_positions <- results_long |>
+  group_by(Population) |>
+  summarize(mid_sample = mean(which(levels(factor(results_long$Sample_ID)) %in% Sample_ID)), 
+            .groups = "drop")
+
+# find the last Sample_ID for each population (for vertical lines)
+vline_positions <- results_long |>
+  group_by(Population) |>
+  summarize(last_sample = last(Sample_ID), .groups = "drop") |>
+  pull(last_sample)
+```
+
+Here
+
+* the `group_by(Population)` function groups the data by `Population`. This means that subsequent operations are performed on each population group separately
+* the `summarize()` function is used to 
+  * calculate the middle (`mean()`) sample-position for each population (in terms of the x-axis position), where the population label should appear
+  * calculate the end (`last()`) sample-position for each population, where the vertical line should be plotted
+* `.groups = "drop"` ensures that the grouping structure is removed after summarizing each population
+
+------------------------------------------------------------------------
+
+Now we can use these two new objects (`population_positions` and `vline_positions`) to add `Population` labels centered on the population, and separate our populations with vertical lines.
+
+As we did for the maps in Part 1, we will also use `scale_fill_manual()` to select the colours used in the plot.
+
+```{r final stacked barplot}
+ggplot(results_long, aes(x = Sample_ID, y = Proportion, fill = Cluster)) +
+  geom_bar(stat = "identity", position = "stack") +
+  
+  # Custom colours for fill
+  scale_fill_manual(values = c("Cluster_1" = "red", "Cluster_2" = "lightblue")) +
+
+  # Add population label at population midpoint
+  annotate("text", x = population_positions$mid_sample, y = -0.01,  # Adjust y to place labels at the bottom
+           label = population_positions$Population, size = 3, fontface = "bold", angle = 90, hjust = 1) +
+  
+  # Add vertical lines after each population
+  geom_vline(xintercept = which(levels(factor(results_long$Sample_ID)) %in% vline_positions) + 0.5, 
+             color = "black", linetype = "solid", linewidth = 0.5) +
+  
+  # Add vertical line at start of plot (for symmetry)
+  geom_vline(xintercept = 0.5, color = "black", linetype = "solid", linewidth = 0.5) +
+  
+  # Add a white rectangle above y = 1 to hide the vertical lines
+  geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = 1, ymax = Inf), fill = "white", color = "white") +
+
+  # Add space below plot so population labels are not cut
+  expand_limits(y = c(-0.1, 1)) + 
+
+  theme_minimal() +
+  labs(y = "Assignment Proportion") +
+  theme(legend.position = "none",
+        axis.text.x = element_blank(),  # Hide original x-axis text
+        axis.ticks.x = element_blank(),
+        panel.grid.major = element_blank(),  # remove  gridlines
+        panel.grid.minor = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(face = "bold"),
+        ) 
+```
+
+**NOTE:** we had to add three more things to "fix" the look of the plot. Firstly, we added a vertical line at the start of the plot. Secondly, we added a white box above y=1 so that it looks like the vertical lines to stop at y=1. Third, we extended the plot a little below y=0 so that populations labels fit inside the plot.
+
+------------------------------------------------------------------------
+
+# Part 3: Principal Component Analysis of Microsatellite Data in `R`
+
+------------------------------------------------------------------------
+
+## 3.1 Why Use Both Model-Based and Assumption-Free Methods in Population Genetics?
+
+In population genetics, researchers use a variety of analytical approaches to understand genetic variation, structure, and evolutionary processes. Broadly, these approaches can be categorized into:
+
+* Model-based methods that make biological assumptions (e.g. STRUCTURE)
+* Assumption-free, individual-based methods (e.g. PCA)
+
+Both types of approaches provide insights, and using them together allows for a more robust interpretation of results with regards to population structure and evolutionary history. 
+
+------------------------------------------------------------------------
+
+### Approaches That Make Biological Assumptions (Model-Based Methods, e.g. STRUCTURE)
+
+These methods rely on explicit biological models that describe how populations evolve and exchange genetic material. A common application in this category of analysis is STRUCTURE, which assigns individuals to populations based on their genotypes.
+
+Key assumptions of such applications include:
+
+* Hardy-Weinberg Equilibrium (HWE)
+* Linkage Equilibrium (LE)
+
+------------------------------------------------------------------------
+
+### The Hardy-Weinberg equilibrium (HWE)
+
+1.  Genotype frequencies are the same in males and females.
+
+2.  Individuals mate at random *with respect to their genotype at this particular locus* (**panmixia**).
+
+3.  Meiosis is fair.
+
+4.  There is no new genetic material (**no mutation**).
+
+5.  There is no gene flow (**no migration**).
+
+6.  The population is of infinite size (**no drift**).
+
+7.  All matings produce the same average number of offspring (**no selection on fecundity**).
+
+8.  There are no differences among genotypes in the probability of survival (**no selection on survival**).
+
+9.  Generations do not overlap (**no selection on reproductive rate**).
+
+------------------------------------------------------------------------
+
+**Evolution is a change in allele frequencies in a population over time**
+
+When a locus in a population is in HWE, it is not evolving: allele frequencies will stay the same across generations.
+
+If HWE assumptions are not met, evolution can happen (allele frequencies may change).
+
+Mutation, non-random mating, gene flow, genetic drift (caused by finite population size), and natural selection violate HWE assumptions and are thus "mechanisms" by which evolution may proceed.
+
+The HWE is thus the **null model** of micro-evolution.
+
+------------------------------------------------------------------------
+
+### Neutral Evolution
+
+Model-based methods usually operate on the premise that there is no evolution (= HWE), or that only a simple form of evolution is occurring (= **neutral evolution**).
+
+A chief reason why population genetic analyses tend to assume neutral evolution is the *computational complexity* involved in modeling non-neutral processes. 'Neutral models' allow for relatively straightforward modeling of allele frequency changes over time due to gene flow, genetic drift and mutation. I.e. these models assume that allele frequencies change due to migration, mutation or random sampling effects across generations, and not other evolutionary mechanisms (e.g. selection). 
+
+The second critical reason for assuming neutral evolution - that is, the presence of genetic drift and mutation - is that the presence of **population structure itself violates HWE**: population subdivision violates the assumption of random mating. This is compounded by restricted gene flow between populations, resulting in genetic drift acting independently in each population.
+
+Within a neutral evolution framework, applications such as STRUCTURE thus use the deviation from HWE to infer population structure.
+
+------------------------------------------------------------------------
+
+### The Wahlund Effect
+
+The Wahlund effect refers to the reduction in the number of heterozygotes due to population structure.
+
+Consider two populations:
+
+>                  AA    Aa    aa
+>           Pop1   50     0     0
+>           Pop2    0     0    50
+
+Here, each population is in HWE.
+
+However, if we treat them as a single population, there are no heterozygotes, and this merged-population is not in HWE.
+
+------------------------------------------------------------------------
+
+### Linkage Equilibrium (LE)
+
+For loci to be in Linkage Equilibrium (LE), the genotype at one locus must be independent of the genotype at other loci. I.e. association of alleles is random.
+
+1.  There is no physical linkage of loci (*they are far enough apart that recombination occurs frequently*).
+
+2.  There is no selection (*alleles not co-inherited due to fitness advantage or disadvantage*).
+
+3.  There is no gene flow (*no influx of individuals carrying non-random associations of alleles*).
+
+In contrast, linkage disequilibrium (LD) occurs when alleles at different loci are non-randomly associated. This has important implications for population genetic analyses, as we want to avoid bias and ensure statistical independence of data points.
+
+------------------------------------------------------------------------
+
+### Limitations of STRUCTURE and Similar Model-Based Approaches
+
+While STRUCTURE and similar model-based clustering approaches are widely used in population genetics, they come with several important limitations.
+
+*Violation of assumptions in biological populations*
+
+These methods assume that populations are in HWE and LE within each inferred cluster. However, real populations often violate these assumptions.
+
+*Computational complexity*
+
+STRUCTURE uses a Bayesian inference framework, which relies on Markov Chain Monte Carlo (MCMC) sampling. This can be computationally intensive, especially for large datasets with 100-1000s of individuals. Run-time increases exponentially with sample size, number of loci, and the number of clusters (K). The need for multiple independent runs to assess convergence adds to computational load.
+
+*Subjectivity in selecting the number of clusters (K)*
+
+Choosing the correct number of clusters (K) is one of the most subjective aspects of STRUCTURE analysis. User-defined priors and parameters (e.g., admixture model, allele frequency correlation) can influence results. While there is a method to identify the population structure at the highest hierarchical level (ΔK method from Evanno et al.), there is actually no method to confirm the presence of only a single cluster!
+
+------------------------------------------------------------------------
+
+### Assumption-Free, Individual-Based Approaches (e.g. PCA)
+
+Unlike STRUCTURE and similar model-based methods, some methods analyze genetic variation without assuming discrete populations or equilibrium conditions. These assumption-free methods permit a more flexible representation of genetic relationships (especially when populations are continuous rather than distinct).
+
+*Principal Component Analysis (PCA)*
+
+PCA is a widely used statistical technique that reduces high-dimensional data into a small number of principal components (PCs), which summarize the major patterns of variation. Each principal component captures a portion of the total variance in the dataset, with the first PC explaining the largest amount of variation, followed by the second, third, and so on. More on that later.
+
+
+------------------------------------------------------------------------
+
+## 3.2 Importing Microsatellite Data into `R`
+
+------------------------------------------------------------------------
+
+### The `genepop` format
+
+We will be using a very common type of input file for microsatellite data, which was originally developed for a stand-alone program called **Genepop**.
+You have used such a file with Jörns to do some analyses yesterday. 
+
+As a reminder, here is the basic structure:
+
+    comment line
+              locus-1, locus-2, locus-3, ... 
+    pop
+    Ind-1  ,   100102   135135   204208  ...
+    Ind-2  ,   100100   131139   200208  ...
+    Ind-3  ,   102102   131139   200204  ...
+    Ind-4  ,   000000   135139   208208  ...
+    ...
+
+1.  the first line is a "comment line" - you can keep notes on your project here. E.g. "24 animals, 8 loci"
+
+2.  the second line contains the names of the loci (locus-1, ...).
+
+3.  the third line has a "pop flag" that indicates the next samples belong to the same population.
+
+4.  below this (until the next *pop flag*), every line is a multi-locus genotype per individual belonging to the population:
+
+    -   the first column with sample ID (followed by a comma)
+    -   the following columns with the genotype at a given locus (the two alleles, without a separator)
+    -   missing data at a locus is denoted by "000000"
+
+------------------------------------------------------------------------
+
+### Reading your data into `R`
+
+In the folder `data` in this RStudio project you can find the genepop file called `lynx_12loc.gen`.
+
+We can create an `R` object that contains the data in `lynx_12loc.gen` using the `read.genepop()` function of `adegenet`.
+
+Here we need to provide the path of the file as `"/data/lynx_12loc.gen"` using `file =`, and some information about how microsatellite data is encoded in the file using `ncode =`.
+(And here we also set the argument `quiet = TRUE`; this is just to shorten this document by not displaying some messages, so you don't have to do that.)
+
+```{r read genepop files, eval = TRUE}
+myData <- read.genepop(file = "data/lynx_12loc.gen", ncode = 3, quiet = TRUE)
+```
+
+***Why did we use `ncode = 3`?***
+
+Now the data is read into `R`.
+
+------------------------------------------------------------------------
+
+### `R` representations of your data: the `genind` format
+
+We haven't looked at our in data yet, so let's do it!
+
+```{r first look at a genind object}
+myData
+```
+
+------------------------------------------------------------------------
+
+**Geeky note:** for more details on the content of the `genind` object, just use `str()`:
+
+```{r behind the genind object 1}
+str(myData)
+```
+
+or for even more geeky details:
+
+```{r behind the genind object 2, eval = FALSE}
+print.AsIs(myData)
+```
+
+The output of the previous chunk is not displayed here because it is particularly long.
+
+**Geeky note:** as you can see, the `genind` object is a special list. Technically it is a so-called S4 object. Instead of accessing elements with `$` (the typical way to access elements in S3 objects -- the usual ones), when using S4 objects elements (called slots) are typically accessible with `@`, which is why `@` showed up above. Yet, to make things easier, the programmer behind `adegenet` made it possible to use `$` anyway.
+
+Since manipulating such objects is a little complicated, instead of exploiting the internal structure of the objects you should use (when it is possible) the *accessors* embedded in the packages:
+
+```{r accessor_nInd}
+nInd(myData) # Number of individuals
+```
+
+```{r accessor_nLoc}
+nLoc(myData) # Number of loci
+```
+
+```{r accessor_nPop}
+nPop(myData) # Number of populations
+```
+
+```{r accessor_locNames}
+locNames(myData) # Names of loci
+```
+
+```{r accessor_alleles}
+alleles(myData) # List of all alleles
+```
+
+```{r accessor_nAll}
+nAll(myData, onlyObserved  = TRUE) # Number of alleles for each locus
+```
+
+```{r accessor_indNames}
+indNames(myData) # Names of individuals
+```
+
+```{r accessor_popNames}
+popNames(myData) # Name of the last individual in each population
+```
+
+------------------------------------------------------------------------
+
+### Using accessors
+
+Some of the accessors can also be used to redefine some information (so handle with great care!):
+
+```{r accessors for replacement}
+# Let's give the pops some names, based on their population of origin:
+
+myPops <- c("Estonia", "Latvia", "Poland", "Russia", "Slovenia", "Croatia", "Bavaria", "France", "Slovakia")
+popNames(myData) <- myPops
+popNames(myData)
+```
+
+```{r accessors for replacement 2}
+pop(myData)
+```
+
+------------------------------------------------------------------------
+
+## 3.3 Principal Component Analysis (PCA)
+
+------------------------------------------------------------------------
+
+Individual-based analyses frequently do not make biological assumptions about samples, because they look at the differences between individuals rather than at differences between (sub)populations.
+
+However, comparing every individual to every other individuals would lead to $\dfrac{n(n-1)}{2}$ comparisons (i.e. $n^2$ minus the number of equivalent comparisons, minus the number of comparisons of individuals to themselves), which quickly becomes a huge number as the sample size ($n$) grows.
+
+In this context, it is not surprising that people have come up with ways to *visualize* beyond the mere tabulation of similarities between individuals.
+
+Two very common ways are **trees** (or networks) and **PCA**.
+
+One benefit of such graphical representations is that we can see the extent to which individuals cluster into well defined genetic groups.
+
+------------------------------------------------------------------------
+
+***Principal Component Analysis*** is a statistical method used to reduce the dimensionality of large datasets while preserving as much variation as possible. 
+
+In the context of genetic data, PCA helps to identify patterns of genetic variation across individuals or populations.
+
+How does it work?
+
+* We have genetic data as a matrix
+* PCA transforms this high-dimensional data into a new set of axes (= principle components), which explain most of the genetic variation
+* Individuals are plotted using two principle components (usually PC1, PC2), which explain a proportion of the genetic variation
+
+------------------------------------------------------------------------
+
+To draw the PCA very quickly, you can use the `indpca()` function of the `hierfstat` package:
+
+```{r pca hierf}
+plot(indpca(myData))
+```
+
+For doing a little more, we are going to use the combination of the packages `ade4` and `adegenet` instead.
+
+------------------------------------------------------------------------
+
+This is how you run a PCA:
+
+```{r pca}
+myData_matrix <- scaleGen(myData, center = FALSE, scale = FALSE, NA.method = "mean")
+mypca <- dudi.pca(myData_matrix, center = TRUE, scale = FALSE, scannf = FALSE, nf = Inf)
+```
+
+------------------------------------------------------------------------
+
+### What does the PCA do?
+
+The PCA creates new dimensions...
+
+```{r pca explained 1}
+head(mypca$li[, 1:4]) ## only show head for first 4 axes
+```
+
+which are uncorrelated...
+
+```{r pca explained 2}
+zapsmall(cor(mypca$li)[1:4, 1:4])  ## only shows correlations between for first 4 axes
+```
+
+and which capture a decreasing amount of variation of the original loci:
+
+```{r pca explained 3}
+barplot(mypca$eig/sum(mypca$eig),
+        names.arg = colnames(mypca$li),
+        cex.names = 0.5,
+        col = heat.colors(length(mypca$eig)),
+        las = 2, ylab = "Proportion of variance explained")
+```
+
+or the same thing expressed as the cumulative percentage of variation accounted for the axes:
+
+```{r pca explained 4}
+barplot(cumsum(100*mypca$eig/sum(mypca$eig)),
+        names.arg = colnames(mypca$li),
+        cex.names = 0.5,
+        col = rev(heat.colors(length(mypca$eig))),
+        las = 2, log = "y",
+        ylab = "Cumulative proportion of variance explained")
+```
+
+------------------------------------------------------------------------
+
+### Plotting the PCA
+
+There are many ways to plot a PCA, but here we are interested in projecting the individuals into the new loci space, so we use the function `s.class()`:
+
+```{r plot PCA 1}
+s.class(mypca$li, fac = pop(myData),
+        col = rainbow(nPop(myData)), grid = FALSE, xax = 1, yax = 2, cpoint = 0)
+s.label(mypca$li, add.plot = TRUE, boxes = FALSE, clabel = 0.5)
+add.scatter.eig(mypca$eig[1:10], xax = 1, yax = 2, ratio = 0.15)
+```
+
+You can omit sample labels for clarity:
+
+```{r plot PCA 2}
+s.class(mypca$li, fac = pop(myData),
+        col = rainbow(nPop(myData)), grid = FALSE, xax = 1, yax = 2, cpoint = 0)
+add.scatter.eig(mypca$eig[1:10], xax = 1, yax = 2, ratio = 0.15)
+```
+
+------------------------------------------------------------------------
+
+***Can we theorize which populations belong to the same subspecies of lynx?***
+
+------------------------------------------------------------------------
+
+Let's give the populations some colours based on subspecies, which we can then use in the plot.
+
+First, we create the `pop_colours` object, defining a colour based on population name
+
+```{r defining population colours}
+# custom colors for pops
+pop_colours <- c(
+  "Estonia" = "blue",
+  "Latvia" = "blue",
+  "Poland" = "blue",
+  "Russia" = "blue",
+  "Slovenia" = "red",
+  "Croatia" = "red",
+  "Bavaria" = "red",
+  "France" = "red",
+  "Slovakia" = "red"
+)
+```
+
+and then use `pop_colours` in the `s.class()` argument `col` 
+
+```{r plot PCA 3}
+s.class(mypca$li, fac = pop(myData),
+        col = pop_colours, grid = FALSE, xax = 1, yax = 2, cpoint = 0)
+add.scatter.eig(mypca$eig[1:10], xax = 1, yax = 2, ratio = 0.15)
+```
+
+
+------------------------------------------------------------------------
+
+### Variation Captured by PCs
+
+In `mypca`, the eigenvalues of the principal components are stored in the `eig` element. These eigenvalues represent the variance explained by each axis. 
+
+```{r eigenvalues 1}
+mypca$eig
+```
+
+To obtain the proportion of variation explained by each axis, we divide each eigenvalue by the sum of all eigenvalues.
+
+```{r  eigenvalues 2}
+prop_explained <- ( mypca$eig / sum(mypca$eig) ) * 100 # we want percent
+
+prop_explained
+```
+
+Maybe easier if we limit to two decimal places - we will also use this later, to add informative text to axis labels.
+
+```{r eigenvalues 3}
+prop_explained <-round(prop_explained, 2)
+
+prop_explained 
+```
+
+------------------------------------------------------------------------
+
+### Making it a `ggplot2` Object
+
+The `s.class()` function from the `ade4` package creates a base `R` plot, not a `ggplot2` object. Functions we will use later to arrange multiple plots expect `ggplot2` objects, so base `R` plots like those from `s.class()` cannot be included. 
+
+We can make a dataframe from relevant parts of `mypca`, and subsequently use this to make ggplots to visualize the PCA.
+
+```{r PCA dataframe}
+pca_df <- data.frame(
+  Sample_ID = rownames(mypca$li),  # sample names
+  PC1 = mypca$li[, 1],  # first principal component
+  PC2 = mypca$li[, 2],  # second principal component
+  Population = pop(myData)  # population name
+)
+
+head(pca_df)
+```
+
+------------------------------------------------------------------------
+
+Let's make a plot that looks similar to the `s.class()` output, but using `ggplot2`:
+
+```{r PCA ggplot 1}
+ggplot(pca_df, aes(x = PC1, y = PC2, color = Population, fill = Population)) +
+  geom_point(size = 3, alpha = 0.8) +  # samples as points
+  stat_ellipse(aes(fill = Population), type = "t", level = 0.95, geom = "polygon", alpha = 0.2, color = NA) +  # ellipses
+  scale_color_manual(values = pop_colours) +  # colours for points
+  scale_fill_manual(values = pop_colours) +  # colours for ellipses
+  theme_minimal() +
+  labs(x = "PC1", y = "PC2") +
+  theme(legend.position = "none")
+```
+
+Here we also have the 95% confidence ellipse as in the `s.class()` plot.
+
+------------------------------------------------------------------------
+
+To add the population labels, we need to find the center position per population:
+
+```{r PCA centroids}
+centroids <- pca_df |>
+  group_by(Population) |>
+  summarize(PC1 = mean(PC1), PC2 = mean(PC2))
+```
+
+and use `geom_text()` to add them to the plot:
+
+```{r PCA ggplot 2}
+ggplot(pca_df, aes(x = PC1, y = PC2, color = Population, fill = Population)) +
+  geom_point(size = 3, alpha = 0.8) +  
+  stat_ellipse(aes(fill = Population), type = "t", level = 0.95, geom = "polygon", alpha = 0.2, color = NA) + 
+  scale_color_manual(values = pop_colours) + 
+  scale_fill_manual(values = pop_colours) + 
+  theme_minimal() +
+  labs(x = "PC1", y = "PC2") +
+  theme(legend.position = "none") +
+  geom_text(data = centroids, aes(label = Population), fontface = "bold", size = 5, color = "white")  # pop labels
+ 
+```
+
+------------------------------------------------------------------------
+
+### Add Proportion of Variation
+
+We should include text in the axis labels telling us how much variation is explained by the axes we are plotting.
+
+```{r text for axis labels for PCA plot}
+xlab_text <- paste0("PC1 (", prop_explained[1], "% of variation)")
+ylab_text <- paste0("PC2 (", prop_explained[2], "% of variation)")
+
+xlab_text
+ylab_text
+```
+
+Here, we are pasting together three elements: some text, a value in `prop_explained`, and some more text.
+
+Let's add this to the plot, and make axis labels bold and large:
+
+```{r PCA ggplot 3}
+ggplot(pca_df, aes(x = PC1, y = PC2, color = Population, fill = Population)) +
+  geom_point(size = 3, alpha = 0.8) +  
+  stat_ellipse(aes(fill = Population), type = "t", level = 0.95, geom = "polygon", alpha = 0.2, color = NA) + 
+  geom_text(data = centroids, aes(label = Population), fontface = "bold", size = 5, color = "white") +
+  scale_color_manual(values = pop_colours) + 
+  scale_fill_manual(values = pop_colours) + 
+  theme_minimal() +
+  labs(x = xlab_text, y = ylab_text) + 
+  theme(
+    legend.position = "none",
+    axis.title = element_text(face = "bold", size = 12))
+
+```
+
+------------------------------------------------------------------------
+
+We now have a PCA plot that we can use for our figure with multiple panels.
+
+------------------------------------------------------------------------
+
+# PART 4: Create a Figure with Multiple Panels
+
+We are going to use the `ggarrange()` function from the `ggpubr` package to make our final figure with three panels.
+
+For convenience, let's put the code for the three plots here.
+
+```{r three ggplot objects for figure}
+# Map from PART.1
+map_plot <- ggplot() +
+  geom_sf(data = world, fill = "grey80", color = "white") +
+  geom_sf(data = species, fill = "darkorange", color="black", alpha = 0.5) +
+  geom_point(data = pop_info, aes(x = longitude, y = latitude), shape = 21, fill = "grey10", color = "black", stroke = 1, size = 3) +
+  coord_sf(xlim = c(manual_bbox$xmin, manual_bbox$xmax),
+           ylim = c(manual_bbox$ymin, manual_bbox$ymax)) +
+  theme_minimal() +
+  annotate("text", x = 36, y = 57, label = "L.l.lynx", size = 3, color = "black", fontface = "italic") +
+  annotate("text", x = 22.5, y = 46, label = "L.l.carpathicus", size = 3, color = "black", fontface = "italic") +
+  labs(x = "Longitude",
+       y = "Latitude") +
+  theme(axis.title = element_text(size = 12, face = "bold"),  
+    axis.text = element_text(size = 10)
+  )
+
+# STRUCTURE from PART.2
+STRUCTURE_plot <- ggplot(results_long, aes(x = Sample_ID, y = Proportion, fill = Cluster)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = c("Cluster_1" = "red", "Cluster_2" = "lightblue")) +
+  annotate("text", x = population_positions$mid_sample, y = -0.01,  
+           label = population_positions$Population, size = 3, fontface = "bold", angle = 90, hjust = 1) +
+  geom_vline(xintercept = which(levels(factor(results_long$Sample_ID)) %in% vline_positions) + 0.5, 
+             color = "black", linetype = "solid", linewidth = 0.5) +
+  geom_vline(xintercept = 0.5, color = "black", linetype = "solid", linewidth = 0.5) +
+  geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = 1, ymax = Inf), fill = "white", color = "white") +
+  scale_y_continuous(limits = c(-0.25, 1), # create space for text
+                     breaks = c(0, 0.5, 1),  # custom break points
+                     labels = c("0", "0.5", "1")) +  # labels for break points
+  theme_minimal() +
+  labs(y = "Assignment Proportion") +
+  theme(legend.position = "none",
+        axis.text.x = element_blank(), 
+        axis.ticks.x = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(face = "bold"),
+        ) 
+
+# PCA from PART.3
+PCA_plot <- ggplot(pca_df, aes(x = PC1, y = PC2, color = Population, fill = Population)) +
+  geom_point(size = 3, alpha = 0.8) +  
+  stat_ellipse(aes(fill = Population), type = "t", level = 0.95, geom = "polygon", alpha = 0.2, color = NA) + 
+  geom_text(data = centroids, aes(label = Population), fontface = "bold", size = 5, color = "white") +
+  scale_color_manual(values = pop_colours) + 
+  scale_fill_manual(values = pop_colours) + 
+  theme_minimal() +
+  labs(x = xlab_text, y = ylab_text) + 
+  theme(
+    legend.position = "none",
+    axis.title = element_text(face = "bold", size = 12))
+
+```
+
+------------------------------------------------------------------------
+
+A simple way to arrange three plots in a single column, and giving the plots a label:
+
+```{r ggarrange single column}
+ggarrange(map_plot, PCA_plot, STRUCTURE_plot, ncol = 1, labels = c("A", "B", "C"))
+```
+
+The first arguments in `ggarrange()` are our three ggplot objects. Then we define the number of columns with `ncol`, and can provide labels for the plots using `labels = c()`.
+
+------------------------------------------------------------------------
+
+We could also do two plots in the top row (labeled A, B) and one plot in the bottom row (labeled C)
+
+```{r more complex ggarrange 1}
+top_row <- ggarrange(map_plot, STRUCTURE_plot, ncol = 2, labels = c("A", "B"))
+
+final_plot <- ggarrange(top_row, PCA_plot, ncol = 1, labels = c("", "C"))
+
+final_plot
+```
+
+As you can see, we can have an object created using `ggarrange()` (here, `top_row`) within another object (`final_plot`).
+
+Both `top_row` and `final_plot` can utilise arguments impacting design and labeling. 
+
+------------------------------------------------------------------------
+
+We can also change the relative size (here height) of elements.
+
+```{r more complex ggarrange 2}
+bottom_row <- ggarrange(STRUCTURE_plot, PCA_plot, ncol = 2, labels = c("B", "C"))
+
+final_plot <- ggarrange(map_plot, bottom_row, ncol = 1, labels = c("A", ""), 
+                        align = "v", heights = c(2, 1)) # top row is twice as tall
+final_plot
+```
+
+
+------------------------------------------------------------------------
+
+Let's 
+
+* have the map and PCA on the top row, 
+* adjust the map's width (it isn't a square), and
+* have the STRUCTURE plot be less tall than the other two plots
+
+```{r more complex ggarrange 3}
+top_row <- ggarrange(map_plot, PCA_plot, labels = c("A", "B"), 
+                     widths = c(1.2, 1)) #adjust width
+
+final_plot <- ggarrange(top_row, STRUCTURE_plot, labels = c("", "C"), 
+                        ncol = 1, heights = c(2, 1))   
+
+final_plot
+```
+
+------------------------------------------------------------------------
+
+This is quite close to a decent final design. However, the PCA still looks taller than the map, and the "C" label is close to the y-axis label of the STRUCTURE plot. 
+
+We can adjust the margins of the plots to achieve a more balanced design. We can do this using `+ theme()` as shown here.
+
+```{r adjust margins in multipanel figure}
+# fiddle with margins; numbers refer to (top, right, bottom, left)
+map_plot <- map_plot + theme(plot.margin = margin(5, 5, 5, 5))
+PCA_plot <- PCA_plot + theme(plot.margin = margin(30, 5, 30, 5))
+STRUCTURE_plot <- STRUCTURE_plot + theme(plot.margin = margin(5, 5, 5, 15))
+
+# plot
+top_row <- ggarrange(map_plot, PCA_plot, labels = c("A", "B"), 
+                     widths = c(1.2, 1)) 
+
+final_plot <- ggarrange(top_row, STRUCTURE_plot, labels = c("", "C"), 
+                        ncol = 1, heights = c(2, 1))
+
+final_plot
+```
+
+**NOTE:** things may not look the same when you export a figure. E.g. font sizes may look fine while working in RStudio, but not in the exported file (PDF, JPG, etc).
+
+------------------------------------------------------------------------
+
+### Export as PDF
+
+```{r export PDF, eval = FALSE}
+ggsave("test.pdf", plot=final_plot, width = 10, height = 8)
+```
+
+------------------------------------------------------------------------
+
+Now, we could further customize the design of the plots. E.g. modify font sizes, add arrows, change colours.
+
+```{r }
+
+
+```
+
+
+```{r }
+
+```
+
+
+```{r }
+
+```
+
+
+
+
+
+
+
+
+# THE END
+
+

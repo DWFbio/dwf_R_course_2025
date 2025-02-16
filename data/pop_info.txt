@@ -1,0 +1,10 @@
+population	latitude	longitude	subspecies	pop.history
+Estonia	58.52569	25.46521	L.l.lynx	autochthonous
+Latvia	56.90540	25.78686	L.l.lynx	autochthonous
+Poland	53.94635	23.24323	L.l.lynx	autochthonous
+Russia	58.57679	45.85726	L.l.lynx	autochthonous
+Slovenia	46.24314	13.87967	L.l.carpathicus	reintroduced
+Croatia	44.90512	15.06619	L.l.carpathicus	reintroduced
+Bavaria	49.04526	13.14496	unknown	reintroduced
+France	48.48748	7.31323	unknown	reintroduced
+Slovakia	49.03203	19.38991	L.l.carpathicus	autochthonous

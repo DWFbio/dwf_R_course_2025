@@ -1,0 +1,7 @@
+Code	Definition
+1	Extant (species is currently present and known to exist in the area)
+2	Probably Extant (species is likely present, but there is some uncertainty)
+3	Possibly Extant (species may be present, but data is insufficient to confirm)
+4	Possibly Extinct (species was previously known in the area but may now be extinct)
+5	Extinct (species is no longer found in the area)
+6	Presence Uncertain (insufficient data to determine whether the species occurs in the area)
